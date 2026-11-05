@@ -50,11 +50,19 @@ class MusicTTSBot(commands.Bot):
                 discord.opus._load_default()
                 print("  🎵 [Opus Audio] discord.opus 기본 라이브러리 로드 성공!")
             except Exception:
-                try:
-                    discord.opus.load_opus("libopus.so.0")
-                    print("  🎵 [Opus Audio] libopus.so.0 직접 로드 성공!")
-                except Exception as e:
-                    print(f"  ⚠️ [Opus Audio] discord.opus 로드 실패: {e}")
+                candidates = ["libopus.so.0", "libopus.so", "opus.dll", "libopus-0.dll"]
+                loaded = False
+                for c in candidates:
+                    try:
+                        discord.opus.load_opus(c)
+                        print(f"  🎵 [Opus Audio] {c} 직접 로드 성공!")
+                        loaded = True
+                        break
+                    except Exception:
+                        pass
+                if not loaded:
+                    print("  ⚠️ [Opus Audio] Opus 코덱이 로드되지 않았습니다. 소리가 나지 않을 수 있습니다.")
+                    print("     해결책: 'pip install PyNaCl' 또는 Linux: 'sudo apt install libopus0' 실행")
 
         print("🌟 음악 재생 및 TTS 디스코드 봇 Cog 로딩 시작...")
         initial_extensions = [

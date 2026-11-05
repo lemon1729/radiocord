@@ -21,13 +21,31 @@ TTS_SETTINGS_PATH = DATA_DIR / "tts_settings.json"
 TTS_CACHE_DIR = DATA_DIR / "tts_cache"
 TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-FFMPEG_EXECUTABLE = shutil.which("ffmpeg")
-if not FFMPEG_EXECUTABLE:
+def find_ffmpeg_executable() -> str:
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
     try:
         import imageio_ffmpeg
-        FFMPEG_EXECUTABLE = imageio_ffmpeg.get_ffmpeg_exe()
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and Path(exe).exists():
+            return exe
     except Exception:
-        FFMPEG_EXECUTABLE = "ffmpeg"
+        pass
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "Microsoft/WinGet/Links/ffmpeg.exe",
+        Path("C:/ffmpeg/bin/ffmpeg.exe"),
+        Path("C:/Program Files/ffmpeg/bin/ffmpeg.exe"),
+        Path("/usr/bin/ffmpeg"),
+        Path("/usr/local/bin/ffmpeg"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return "ffmpeg"
+
+FFMPEG_EXECUTABLE = find_ffmpeg_executable()
 
 VOICE_CHOICES = {
     "ko-KR-SunHiNeural": {

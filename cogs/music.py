@@ -121,13 +121,33 @@ MUSIC_SETTINGS_PATH = DATA_DIR / "music_settings.json"
 STELLIVE_DB_PATH = DATA_DIR / "stellive_database.json"
 COOKIE_PATH = DATA_DIR.parent / "cookies.txt"
 
-# FFmpeg 실행 파일 경로 감지: 시스템 설치(apt) 우선, 없을 시 imageio-ffmpeg 사용
-FFMPEG_EXECUTABLE = shutil.which("ffmpeg")
-if not FFMPEG_EXECUTABLE:
+# FFmpeg 실행 파일 경로 스마트 감지: 시스템 PATH -> imageio-ffmpeg -> OS 기본 설치 경로
+def find_ffmpeg_executable() -> str:
+    import os
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
     try:
-        FFMPEG_EXECUTABLE = imageio_ffmpeg.get_ffmpeg_exe()
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and Path(exe).exists():
+            return exe
     except Exception:
-        FFMPEG_EXECUTABLE = "ffmpeg"
+        pass
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    candidates = [
+        Path(local_app_data) / "Microsoft/WinGet/Links/ffmpeg.exe",
+        Path("C:/ffmpeg/bin/ffmpeg.exe"),
+        Path("C:/Program Files/ffmpeg/bin/ffmpeg.exe"),
+        Path("/usr/bin/ffmpeg"),
+        Path("/usr/local/bin/ffmpeg"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return "ffmpeg"
+
+FFMPEG_EXECUTABLE = find_ffmpeg_executable()
 
 
 def is_port_open(port: int, host: str = "127.0.0.1") -> bool:
@@ -588,6 +608,68 @@ def create_search_embed(query: str, platform: str, songs: List[Song], requester:
 
     embed.set_footer(text=f"신청자: {requester.display_name} • 취소하려면 ❌를 눌러주세요 🎵")
     return embed
+
+class SongSelectView(discord.ui.View):
+    """검색 결과 상위 곡을 버튼으로 1초 만에 선택하는 반응형 뷰 (권한 오류 원천 차단)"""
+    def __init__(self, songs: List[Song], requester: discord.Member, timeout: float = 60.0):
+        super().__init__(timeout=timeout)
+        self.songs = songs
+        self.requester = requester
+        self.selected_index: Optional[int] = None
+        self.cancelled: bool = False
+        self.message: Optional[discord.Message] = None
+
+        number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+        for i in range(len(songs)):
+            btn = discord.ui.Button(
+                label=f"{i+1}번",
+                emoji=number_emojis[i],
+                style=discord.ButtonStyle.primary,
+                custom_id=f"song_select_{i}"
+            )
+            btn.callback = self._make_callback(i)
+            self.add_item(btn)
+
+        cancel_btn = discord.ui.Button(
+            label="취소",
+            emoji="❌",
+            style=discord.ButtonStyle.danger,
+            custom_id="song_select_cancel"
+        )
+        cancel_btn.callback = self._cancel_callback
+        self.add_item(cancel_btn)
+
+    def _make_callback(self, index: int):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.requester.id:
+                await interaction.response.send_message("❌ 명령어를 실행한 사용자만 선택할 수 있습니다.", ephemeral=True)
+                return
+            self.selected_index = index
+            for child in self.children:
+                child.disabled = True
+            self.stop()
+            await interaction.response.edit_message(content=f"⏳ **{index + 1}번** 곡을 불러오는 중입니다...", embed=None, view=None)
+        return callback
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.requester.id:
+            await interaction.response.send_message("❌ 명령어를 실행한 사용자만 취소할 수 있습니다.", ephemeral=True)
+            return
+        self.cancelled = True
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+        await interaction.response.edit_message(content="❌ 곡 선택이 취소되었습니다.", embed=None, view=None)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(content="⏰ 곡 선택 시간이 초과되었습니다 (60초).", embed=None, view=None)
+            except Exception:
+                pass
+
 
 
 class DuckingAudioSource(discord.AudioSource):
@@ -1473,131 +1555,94 @@ class Music(commands.Cog):
                 await interaction.followup.send(embed=embed)
             return
 
-        # 3. 검색어인 경우: 상위 5곡 목록 임베드 + 이모지 반응 선택 제공
+        # 3. 검색어인 경우: 상위 5곡 목록 임베드 + 인터랙티브 버튼(View) 선택 제공 (100% 작동 보장)
         embed = create_search_embed(검색어, platform, songs, interaction.user)
-        message = await interaction.followup.send(embed=embed)
+        view = SongSelectView(songs, interaction.user, timeout=60.0)
+        message = await interaction.followup.send(embed=embed, view=view)
+        view.message = message
 
-        number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-        cancel_emoji = "❌"
-        active_emojis = number_emojis[:len(songs)] + [cancel_emoji]
+        await view.wait()
 
-        # 백그라운드 태스크로 이모지 순차 등록 (반응 추가 중에도 사용자가 바로 클릭 가능)
-        async def add_reactions_task():
-            for emoji in active_emojis:
-                try:
-                    await message.add_reaction(emoji)
-                except Exception:
-                    break
-
-        reaction_bg_task = asyncio.create_task(add_reactions_task())
-
-        def reaction_check(reaction: discord.Reaction, user: discord.User | discord.Member):
-            return (
-                reaction.message.id == message.id
-                and user.id == interaction.user.id
-                and str(reaction.emoji) in active_emojis
-            )
-
-        try:
-            reaction, user = await self.bot.wait_for("reaction_add", timeout=60.0, check=reaction_check)
-        except asyncio.TimeoutError:
-            try:
-                await message.clear_reactions()
-            except Exception:
-                pass
-            try:
-                await message.edit(content="⏰ 곡 선택 시간이 초과되었습니다 (60초).", embed=None)
-            except Exception:
-                pass
-            return
-        finally:
-            if not reaction_bg_task.done():
-                reaction_bg_task.cancel()
-
-        try:
-            await message.clear_reactions()
-        except Exception:
-            pass
-
-        chosen_emoji = str(reaction.emoji)
-        if chosen_emoji == cancel_emoji:
-            await message.edit(content="❌ 곡 선택이 취소되었습니다.", embed=None)
+        if view.cancelled:
             return
 
-        if chosen_emoji in number_emojis:
-            index = number_emojis.index(chosen_emoji)
-            selected_song = songs[index]
+        if view.selected_index is None:
+            # 타임아웃
+            return
 
-            await message.edit(content=f"⏳ **{index + 1}번** 곡을 불러오는 중입니다...", embed=None)
+        index = view.selected_index
+        selected_song = songs[index]
 
-            try:
-                await selected_song.ensure_stream_url(self.bot.loop)
-            except Exception as e:
-                await message.edit(content=f"⚠️ `{selected_song.title}` 음원 추출 실패: {e}", embed=None)
-                return
+        await message.edit(content=f"⏳ **{index + 1}번** 곡을 불러오는 중입니다...", embed=None)
 
-            is_first_track = (
-                player.current is None
-                and len(player.queue) == 0
-                and (player.voice_client is None or (not player.voice_client.is_playing() and not player.voice_client.is_paused()))
-            )
+        try:
+            await selected_song.ensure_stream_url(self.bot.loop)
+        except Exception as e:
+            await message.edit(content=f"⚠️ `{selected_song.title}` 음원 추출 실패: {e}", embed=None)
+            return
 
-            if is_playnext:
-                player.queue.appendleft(selected_song)
-            else:
-                if player.radio_mode:
-                    first_radio_idx = None
-                    for idx, s in enumerate(player.queue):
-                        if getattr(s, "is_radio", False):
-                            first_radio_idx = idx
-                            break
-                    if first_radio_idx is not None:
-                        player.queue.insert(first_radio_idx, selected_song)
-                    else:
-                        player.queue.append(selected_song)
+        is_first_track = (
+            player.current is None
+            and len(player.queue) == 0
+            and (player.voice_client is None or (not player.voice_client.is_playing() and not player.voice_client.is_paused()))
+        )
+
+        if is_playnext:
+            player.queue.appendleft(selected_song)
+        else:
+            if player.radio_mode:
+                first_radio_idx = None
+                for idx, s in enumerate(player.queue):
+                    if getattr(s, "is_radio", False):
+                        first_radio_idx = idx
+                        break
+                if first_radio_idx is not None:
+                    player.queue.insert(first_radio_idx, selected_song)
                 else:
                     player.queue.append(selected_song)
-
-            if is_first_track:
-                player.skip_next_now_playing_message = True
-            player.start_player()
-
-            # 자동 TTS 세션 연결
-            tts_cog = self.bot.get_cog("TTSCog")
-            if tts_cog and hasattr(tts_cog, "bind_session") and voice_client and voice_client.channel:
-                tts_cog.bind_session(interaction.guild.id, interaction.channel_id, voice_client.channel.id)
-
-            notice = " (⚠️ 유튜브 봇 방지로 사운드클라우드 대체 음원 재생)" if selected_song.fallback_used else ""
-
-            if is_first_track:
-                embed = create_now_playing_embed(selected_song, player)
-                view = MusicControlView(player)
-                await message.edit(content=f"✅ **{index + 1}번** 곡을 선택하여 즉시 재생합니다!{notice}", embed=embed, view=view)
-                player.now_playing_message = message
             else:
-                if is_playnext:
-                    embed = discord.Embed(
-                        title="⚡ 우선 예약 등록 완료 (Play Next)",
-                        description=f"[{selected_song.title}]({selected_song.webpage_url})\n\n현재 곡 재생이 끝나면 바로 이 곡이 재생됩니다!",
-                        color=0xF1C40F
-                    )
-                else:
-                    embed = discord.Embed(
-                        title="🎶 대기열 추가 완료",
-                        description=f"[{selected_song.title}]({selected_song.webpage_url})",
-                        color=0x27C7FE
-                    )
-                    embed.add_field(name="현재 대기 번호", value=f"{len(player.queue)}번째", inline=True)
+                player.queue.append(selected_song)
 
-                embed.add_field(name="길이", value=format_duration(selected_song.duration), inline=True)
-                embed.add_field(name="신청자", value=interaction.user.display_name, inline=True)
-                if "대체" in selected_song.platform or "SoundCloud" in selected_song.platform:
-                    embed.add_field(name="플랫폼", value=selected_song.platform_badge, inline=True)
-                if selected_song.thumbnail:
-                    embed.set_thumbnail(url=selected_song.thumbnail)
-                embed.set_footer(text="Discord Music & TTS Bot 🎵")
+        if is_first_track:
+            player.skip_next_now_playing_message = True
+        player.start_player()
 
-                await message.edit(content=f"✅ **{index + 1}번** 곡이 등록되었습니다!{notice}", embed=embed)
+        # 자동 TTS 세션 연결
+        tts_cog = self.bot.get_cog("TTSCog")
+        if tts_cog and hasattr(tts_cog, "bind_session") and voice_client and voice_client.channel:
+            tts_cog.bind_session(interaction.guild.id, interaction.channel_id, voice_client.channel.id)
+
+        notice = " (⚠️ 유튜브 봇 방지로 사운드클라우드 대체 음원 재생)" if selected_song.fallback_used else ""
+
+        if is_first_track:
+            embed = create_now_playing_embed(selected_song, player)
+            view = MusicControlView(player)
+            await message.edit(content=f"✅ **{index + 1}번** 곡을 선택하여 즉시 재생합니다!{notice}", embed=embed, view=view)
+            player.now_playing_message = message
+        else:
+            if is_playnext:
+                embed = discord.Embed(
+                    title="⚡ 우선 예약 등록 완료 (Play Next)",
+                    description=f"[{selected_song.title}]({selected_song.webpage_url})\n\n현재 곡 재생이 끝나면 바로 이 곡이 재생됩니다!",
+                    color=0xF1C40F
+                )
+            else:
+                embed = discord.Embed(
+                    title="🎶 대기열 추가 완료",
+                    description=f"[{selected_song.title}]({selected_song.webpage_url})",
+                    color=0x27C7FE
+                )
+                embed.add_field(name="현재 대기 번호", value=f"{len(player.queue)}번째", inline=True)
+
+            embed.add_field(name="길이", value=format_duration(selected_song.duration), inline=True)
+            embed.add_field(name="신청자", value=interaction.user.display_name, inline=True)
+            if "대체" in selected_song.platform or "SoundCloud" in selected_song.platform:
+                embed.add_field(name="플랫폼", value=selected_song.platform_badge, inline=True)
+            if selected_song.thumbnail:
+                embed.set_thumbnail(url=selected_song.thumbnail)
+            embed.set_footer(text="Discord Music & TTS Bot 🎵")
+
+            await message.edit(content=f"✅ **{index + 1}번** 곡이 등록되었습니다!{notice}", embed=embed)
 
     # ----------------------------------------------------
     # 재생 명령어 (/play)
