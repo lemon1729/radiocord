@@ -1,0 +1,5 @@
+# Netscape HTTP Cookie File
+# 이 파일은 유튜브 봇 차단 방지를 위한 브라우저 쿠키 파일 예시입니다.
+# 실제 쿠키를 사용하려면 브라우저 확장프로그램(Get cookies.txt LOCALLY 등)을 통해
+# 유튜브 로그인 상태에서 쿠키를 추출한 뒤, 파일명을 'cookies.txt'로 변경하여 이 폴더에 넣으세요.
+# (주의: 실제 cookies.txt 파일은 절대 GitHub에 커밋하거나 공유하지 마세요!)

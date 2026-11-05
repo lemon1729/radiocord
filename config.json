@@ -1,0 +1,16 @@
+{
+  "bot_name": "MusicTTSBot",
+  "prefix": "!",
+  "theme": {
+    "color_primary": 5793266,
+    "color_success": 3066993,
+    "color_warning": 15965202,
+    "color_error": 15158332,
+    "footer_text": "Discord Music & TTS Bot 🎵"
+  },
+  "audio": {
+    "default_volume": 0.8,
+    "max_queue_size": 100,
+    "inactivity_timeout_seconds": 300
+  }
+}

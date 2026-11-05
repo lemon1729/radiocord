@@ -1,0 +1,38 @@
+# ========================================================
+# Git Ignore - Discord Music & TTS Bot Template
+# ========================================================
+
+# 1. 민감 정보 및 인증 토큰 (절대 GitHub에 올리면 안 됨!)
+.env
+cookies.txt
+*.pem
+*.key
+*.token
+
+# 2. 파이썬 캐시 및 가상환경
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 3. 런타임 데이터 및 임시 파일
+data/tts_cache/*
+!data/tts_cache/.gitkeep
+data/music_settings.json
+data/tts_settings.json
+data/playlists.json
+*.log
+
+# 4. OS 및 IDE 임시 파일
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
