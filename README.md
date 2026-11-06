@@ -9,6 +9,9 @@
 
 - **🎛️ 권한 오류 없는 인터랙티브 버튼(UI View) 곡 선택**:
   - 검색어 입력 시 `1️⃣`~`5️⃣`, `❌` 버튼이 즉시 렌더링되어 원클릭으로 선택 가능 (봇의 이모지 반응 권한 불필요).
+- **🛡️ Discord 최신 DAVE (Audio E2EE) 음성 암호화 완벽 대응**:
+  - 디스코드의 최신 DAVE 프로토콜 의무화(WebSocket Close 4017 / MLS 키 전이)에 대응하는 런타임 몽키패치(dave_patch.py) 내장.
+  - discord.py 2.7.x의 DAVE 상태 머신 누락 버그(미암호화 Opus 패킷 폐기로 인한 무음 현상)를 완벽히 해결하여 모든 음성 채널에서 100% 정상 오디오 송출.
 - **🔊 오디오 엔진 자가 복구 (Self-Healing Audio)**:
   - 시스템에 FFmpeg가 없어도 `imageio-ffmpeg` 내장 바이너리를 자동 감지하여 묵음(소리 안 남) 현상 원천 차단.
   - `PyNaCl` 및 `libopus` 자동 로드 탑재.
@@ -120,7 +123,17 @@ sudo ./scripts/install_vps_bypass.sh
 
 ## 🛠️ 문제 해결 (FAQ & Troubleshooting)
 
-### Q. 봇이 음성 채널에 들어왔는데 아무 소리도 안 나요!
+### Q. 봇이 재생 중인데 디스코드에서 아무 소리도 안 들려요 (DAVE 음성 무음 현상)!
+- **원인 (디스코드 DAVE E2EE 의무화)**:
+  - 현재 디스코드는 전 세계 음성 채널에 **DAVE (Audio E2EE, 종단간 암호화)** 프로토콜을 필수로 요구하고 있습니다.
+  - discord.py 2.7.x는 게이트웨이의 MLS 키 전이(prepare_transition/execute_transition) 신호를 받았을 때 암호화 키를 활성화하는 내부 로직이 누락되어 있어, 암호화되지 않은 플레인 Opus 패킷을 전송합니다.
+  - 디스코드 클라이언트 앱은 규격에 맞지 않는 비암호화 패킷을 전량 폐기(Drop)하여 음악과 TTS가 모두 **완벽한 무음**으로 처리됩니다.
+- **해결책**:
+  - 본 레포지토리에 기본 탑재된 **dave_patch.py**가 런타임에 DAVE 상태 머신을 안전하게 교정하여 can_encrypt=True로 전환하고 모든 음성 패킷을 정상 E2EE 암호화합니다.
+  - 가상환경에 pip install davey>=0.1.6이 설치되어 있는지 확인하고 봇을 실행하세요 (
+equirements.txt에 포함되어 자동 설치됨).
+
+### Q. 봇이 음성 채널에 들어왔는데 아무 소리도 안 나요 (FFmpeg / 네트워크)!
 1. **FFmpeg 설치 여부 확인**:
    - Windows: `winget install Gyan.FFmpeg` 실행 (또는 `setup.bat` 실행 시 내장 imageio-ffmpeg 자동 적용)
    - Linux: `sudo apt install -y ffmpeg libopus0 libopus-dev`

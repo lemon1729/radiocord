@@ -64,6 +64,13 @@ class MusicTTSBot(commands.Bot):
                     print("  ⚠️ [Opus Audio] Opus 코덱이 로드되지 않았습니다. 소리가 나지 않을 수 있습니다.")
                     print("     해결책: 'pip install PyNaCl' 또는 Linux: 'sudo apt install libopus0' 실행")
 
+        # DAVE (E2EE Voice) 음성 종단간 암호화 패치 적용
+        try:
+            from dave_patch import apply_dave_patch
+            apply_dave_patch()
+        except Exception as e:
+            print(f"  ⚠️ [DAVE Patch] DAVE E2EE 패치 적용 중 오류: {e}")
+
         print("🌟 음악 재생 및 TTS 디스코드 봇 Cog 로딩 시작...")
         initial_extensions = [
             "cogs.music",

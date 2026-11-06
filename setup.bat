@@ -23,7 +23,7 @@ if not exist "venv" (
 )
 
 :: 3. 패키지 설치
-echo [2/4] 음성/음악 필수 패키지를 설치합니다 (discord.py[voice], PyNaCl, yt-dlp, edge-tts 등)...
+echo [2/4] 음성/음악 필수 패키지를 설치합니다 (discord.py[voice], davey, PyNaCl, yt-dlp, edge-tts 등)...
 call venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt

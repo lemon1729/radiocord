@@ -8,7 +8,9 @@
 1. [전체 프로젝트 디렉토리 구조](#1-전체-프로젝트-디렉토리-구조)
 2. [시스템 아키텍처 흐름도](#2-시스템-아키텍처-흐름도)
 3. [유튜브 봇 차단(403/Sign-in) 우회 인프라 3종 세트](#3-유튜브-봇-차단403sign-in-우회-인프라-3종-세트)
-4. [discord.py 오디오 초반 배속/빨리감기(Burst) 방지 패치](#4-discordpy-오디오-초반-배속빨리감기burst-방지-패치)
+4. [SongSelectView & 오디오 패치](#4-songselectview-이모지-권한-오류-없는-100-인터랙티브-버튼-선택-ui)
+   - [4-1. discord.py 오디오 초반 배속/빨리감기(Burst) 방지 패치](#4-1-discordpy-오디오-초반-배속빨리감기burst-방지-패치)
+   - [4-2. Discord DAVE (Audio E2EE) 음성 종단간 암호화 상태 머신 패치](#4-2-discord-dave-audio-e2ee-음성-종단간-암호화-상태-머신-패치)
 5. [DuckingAudioSource: 실시간 덕킹 & 일시정지 믹서](#5-duckingaudiosource-실시간-덕킹--일시정지-믹서)
 6. [Discord Intents & 스마트 채팅-음성 채널 라우팅](#6-discord-intents--스마트-채팅-음성-채널-라우팅)
 7. [24시간 라디오 & 메시지 누적 방지(In-Place Edit)](#7-24시간-라디오--메시지-누적-방지in-place-edit)
@@ -27,6 +29,7 @@ discord-music-tts-template/
 ├── requirements.txt            # 필수 파이썬 라이브러리 목록
 ├── run.bat                     # 윈도우 로컬 실행용 배치 스크립트
 ├── build_custom_radio_db.py    # 유튜브 플레이리스트 -> 라디오 DB 자동 수집기
+├── dave_patch.py               # Discord DAVE (Audio E2EE) 음성 암호화 런타임 패치
 ├── main.py                     # 봇 초기화, 인텐트 설정, Cog 동적 로드
 ├── cogs/
 │   ├── music.py                # 음악 재생, FFmpeg 제어, 라디오 루프, 컨트롤러 UI
@@ -212,6 +215,23 @@ def _patch_discord_audio_player():
 
 _patch_discord_audio_player()
 ```
+
+---
+
+## 4-2. Discord DAVE (Audio E2EE) 음성 종단간 암호화 상태 머신 패치
+
+### 증상 및 문제 원인
+1. **디스코드의 DAVE E2EE 의무화**:
+   - 디스코드는 현재 전 세계 음성 채널에 종단간 암호화인 **DAVE (Audio E2EE)** 프로토콜을 필수로 요구하기 시작했습니다. (미지원 시 WebSocket Close 4017: DAVE protocol required)
+2. **discord.py 2.7.x의 DAVE 상태 머신 누락 버그**:
+   - discord.py는 davey 패키지가 있으면 DAVE 협상을 시도하지만, 게이트웨이로부터 MLS_ANNOUNCE_COMMIT_TRANSITION, MLS_WELCOME, DAVE_PREPARE_TRANSITION, DAVE_EXECUTE_TRANSITION을 받았을 때 davey.DaveSession의 prepare_transition() 및 execute_transition()을 호출하여 키를 활성화하는 로직이 누락되어 있습니다.
+   - 이로 인해 VoiceClient._get_voice_packet()에서 self._connection.can_encrypt 상태가 영구적으로 False로 남아 암호화되지 않은 플레인 Opus 패킷을 전송합니다.
+   - 디스코드 클라이언트 앱(데스크톱, 모바일, 웹)은 DAVE 규격에 맞지 않는 비암호화 패킷을 전량 폐기(Drop)하므로, 봇은 정상 재생 중으로 뜨지만 **아무런 소리도 들리지 않는 완전한 무음(묵음)**이 발생합니다.
+
+### 해결책: dave_patch.py 런타임 몽키패치
+- DiscordVoiceWebSocket.received_binary_message, DiscordVoiceWebSocket.received_message, VoiceConnectionState._execute_transition을 패치하여 MLS 커밋 및 트랜지션 신호를 가로채서 올바르게 상태 전이를 완료합니다.
+- can_encrypt: True로 전환되어 모든 Opus 오디오 패킷이 E2EE 암호화 프레임으로 정상 송출됩니다.
+- 본 프로젝트의 main.py 시작 시 자동으로 dave_patch.apply_dave_patch()가 실행되어 완벽한 호환성을 보장합니다.
 
 ---
 
